@@ -5,7 +5,6 @@ Tests backend API endpoints and displays results.
 """
 import requests
 import sys
-from typing import Dict, Any
 
 
 API_BASE = "http://localhost:8000"
@@ -92,6 +91,7 @@ def test_url_analysis() -> bool:
 def test_email_analysis() -> bool:
     """Test email analysis endpoint."""
     try:
+        # Test with suspicious email - should detect as phishing or at least run successfully
         response = requests.post(
             f"{API_BASE}/analyze/email",
             json={
@@ -103,14 +103,16 @@ def test_email_analysis() -> bool:
         )
         if response.status_code == 200:
             data = response.json()
-            is_phishing = data.get("is_phishing")
             confidence = data.get("confidence", 0)
+            # Success if we get a valid response with confidence score
+            success = 0 <= confidence <= 1
+            status = "phishing" if data.get("is_phishing") else "safe"
             print_result(
                 "Email Analysis",
-                True,
-                f"Detected as {'phishing' if is_phishing else 'safe'} with {confidence:.2%} confidence"
+                success,
+                f"Detected as {status} with {confidence:.2%} confidence"
             )
-            return True
+            return success
         else:
             print_result("Email Analysis", False, f"Status code: {response.status_code}")
             return False
