@@ -109,7 +109,8 @@ class FeatureExtractor:
         features['content_length'] = len(email_content)
         
         # Number of URLs in email
-        url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+        # Use a more specific pattern to count URLs (simple pattern for phishing detection)
+        url_pattern = r'https?://[^\s]+'
         urls = re.findall(url_pattern, email_content)
         features['num_urls'] = len(urls)
         
