@@ -85,7 +85,7 @@ Each dataset is preprocessed for balanced representation and feature extraction.
 ## 🧾 Citation
 If you use this project for research, please cite it as:
 
-> Ratliff, E. (2025). *PhishScope: A Machine Learning-Based Phishing Detection and Simulation System for Cybersecurity Education.* Tennessee State University.
+> Ratliff, E. (2025). *PhishNet: A Machine Learning-Based Phishing Detection and Simulation System for Cybersecurity Education.* Tennessee State University.
 
 ---
 
