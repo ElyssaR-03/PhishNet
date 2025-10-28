@@ -58,7 +58,7 @@ function App() {
       </div>
 
       <footer className="App-footer">
-        <p>© 2024 PhishNet - Protecting you from phishing attacks</p>
+        <p>© 2025 PhishNet - Protecting you from phishing attacks</p>
       </footer>
     </div>
   );
