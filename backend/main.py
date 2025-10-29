@@ -177,8 +177,6 @@ async def analyze_url(request: URLAnalysisRequest):
             individual_predictions=individual_preds,
             phishtank_check=phishtank_result
         )
-            individual_predictions=individual_preds
-        )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
