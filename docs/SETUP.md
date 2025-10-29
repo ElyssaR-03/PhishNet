@@ -137,6 +137,7 @@ cp .env.example .env
 **Verify PhishTank is enabled:**
 
 ```bash
+# Run from the backend directory
 python -c "from config import settings; print(f'PhishTank enabled: {settings.is_phishtank_configured()}')"
 ```
 
@@ -187,7 +188,7 @@ Models saved successfully!
 pytest tests/ -v
 ```
 
-Expected: All 35 tests should pass (26 original + 9 PhishTank tests).
+Expected: All tests should pass (including PhishTank integration tests).
 
 #### Step 6: Start Backend Server
 

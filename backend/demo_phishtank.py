@@ -16,7 +16,7 @@ def main():
     # Check if PhishTank is configured
     if settings.is_phishtank_configured():
         print("✓ PhishTank API is CONFIGURED")
-        print(f"  API Key: {settings.PHISHTANK_API_KEY[:10]}...")
+        print(f"  API Key: ***{settings.PHISHTANK_API_KEY[-4:]}")  # Only show last 4 chars
         print()
     else:
         print("✗ PhishTank API is NOT CONFIGURED")
