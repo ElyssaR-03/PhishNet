@@ -8,6 +8,8 @@ from typing import Optional, Dict, List
 import numpy as np
 from models.ml_models import PhishingDetector
 from feature_extractor import FeatureExtractor
+from phishtank_service import phishtank_service
+from config import settings
 import os
 
 
@@ -54,6 +56,7 @@ class AnalysisResponse(BaseModel):
     features: Dict[str, float]
     model_used: str
     individual_predictions: Optional[Dict[str, int]] = None
+    phishtank_check: Optional[Dict] = None
 
 
 class TrainingRequest(BaseModel):
@@ -69,6 +72,7 @@ class TrainingResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     models_loaded: bool
+    phishtank_enabled: bool
 
 
 # Helper functions
@@ -90,7 +94,8 @@ async def root():
     """Health check endpoint."""
     return {
         "status": "PhishNet API is running",
-        "models_loaded": detector.is_trained
+        "models_loaded": detector.is_trained,
+        "phishtank_enabled": phishtank_service.is_enabled()
     }
 
 
@@ -99,7 +104,8 @@ async def health_check():
     """Detailed health check."""
     return {
         "status": "healthy" if detector.is_trained else "models not trained",
-        "models_loaded": detector.is_trained
+        "models_loaded": detector.is_trained,
+        "phishtank_enabled": phishtank_service.is_enabled()
     }
 
 
@@ -107,6 +113,7 @@ async def health_check():
 async def analyze_url(request: URLAnalysisRequest):
     """
     Analyze a URL for phishing indicators.
+    Includes ML-based analysis and optional PhishTank database check.
     """
     if not detector.is_trained:
         raise HTTPException(
@@ -115,6 +122,11 @@ async def analyze_url(request: URLAnalysisRequest):
         )
     
     try:
+        # Check PhishTank database first (if enabled)
+        phishtank_result = None
+        if phishtank_service.is_enabled():
+            phishtank_result = phishtank_service.check_url(request.url)
+        
         # Extract features
         features = feature_extractor.extract_url_features(request.url)
         
@@ -148,6 +160,12 @@ async def analyze_url(request: URLAnalysisRequest):
             model_used = request.model
         
         is_phishing = bool(prediction == 1)
+        
+        # If PhishTank confirms it's phishing, override ML prediction
+        if phishtank_result and phishtank_result.get('in_database') and phishtank_result.get('verified'):
+            is_phishing = True
+            confidence = max(confidence, 0.95)  # High confidence from verified database
+        
         risk_level = determine_risk_level(confidence, is_phishing)
         
         return AnalysisResponse(
@@ -156,6 +174,9 @@ async def analyze_url(request: URLAnalysisRequest):
             risk_level=risk_level,
             features=features,
             model_used=model_used,
+            individual_predictions=individual_preds,
+            phishtank_check=phishtank_result
+        )
             individual_predictions=individual_preds
         )
         

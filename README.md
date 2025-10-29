@@ -19,6 +19,7 @@ PhishNet is a comprehensive web application that detects phishing attempts using
 - **Email Analysis**: Analyzes email content and sender information
 - **Real-time Detection**: Instant results with confidence scores
 - **Risk Level Assessment**: Categorizes threats (Safe, Low, Medium, High Risk)
+- **PhishTank Integration**: Optional real-time checking against PhishTank's verified phishing database
 
 ### 📚 Educational Dashboard
 - Phishing statistics and trends
@@ -114,12 +115,22 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. Train the models:
+4. Configure PhishTank API (Optional but Recommended):
+```bash
+# Copy the example environment file
+cp .env.example .env
+
+# Edit .env and add your PhishTank API key
+# Get your free API key from: https://www.phishtank.com/api_info.php
+# PHISHTANK_API_KEY=your_actual_api_key_here
+```
+
+5. Train the models:
 ```bash
 python train_models.py
 ```
 
-5. Start the FastAPI server:
+6. Start the FastAPI server:
 ```bash
 python main.py
 ```
@@ -170,6 +181,41 @@ The application will open at `http://localhost:3000`
 3. Read protection tips
 4. Learn about warning signs
 5. Review best practices
+
+## Configuration
+
+### PhishTank API Integration
+
+PhishNet supports integration with the PhishTank database for real-time verification of URLs against a crowdsourced database of verified phishing sites.
+
+#### Getting a PhishTank API Key
+
+1. Visit [PhishTank API Registration](https://www.phishtank.com/api_info.php)
+2. Sign up for a free account
+3. Request an API key (free for non-commercial use)
+4. Copy your API key
+
+#### Configuring PhishTank
+
+1. In the `backend` directory, copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Edit the `.env` file and add your API key:
+   ```bash
+   PHISHTANK_API_KEY=your_actual_api_key_here
+   ```
+
+3. Restart the backend server to apply the changes
+
+#### How PhishTank Integration Works
+
+When PhishTank is enabled:
+- URLs are checked against the PhishTank verified database
+- If a URL is found in PhishTank's database as verified phishing, the result overrides ML prediction
+- PhishTank results are included in the API response under `phishtank_check`
+- The system works without PhishTank if no API key is configured (ML-only mode)
 
 ## API Endpoints
 

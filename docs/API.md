@@ -20,14 +20,20 @@ Check API health status and model availability.
 ```json
 {
   "status": "healthy",
-  "models_loaded": true
+  "models_loaded": true,
+  "phishtank_enabled": true
 }
 ```
+
+**Response Fields:**
+- `status`: Overall health status of the API
+- `models_loaded`: Whether ML models are trained and loaded
+- `phishtank_enabled`: Whether PhishTank API integration is configured
 
 ### URL Analysis
 
 #### `POST /analyze/url`
-Analyze a URL for phishing indicators.
+Analyze a URL for phishing indicators using ML models and optional PhishTank database check.
 
 **Request Body:**
 ```json
@@ -57,9 +63,29 @@ Analyze a URL for phishing indicators.
     ...
   },
   "model_used": "random_forest",
-  "individual_predictions": null
+  "individual_predictions": null,
+  "phishtank_check": {
+    "success": true,
+    "in_database": false
+  }
 }
 ```
+
+**Response Fields:**
+- `is_phishing`: Boolean indicating if URL is phishing
+- `confidence`: Confidence score (0.0 - 1.0)
+- `risk_level`: Risk assessment (Safe, Low Risk, Medium Risk, High Risk)
+- `features`: Extracted feature values
+- `model_used`: The ML model that was used
+- `individual_predictions`: Individual model predictions (ensemble mode only)
+- `phishtank_check`: PhishTank database check results (if enabled)
+  - `success`: Whether the PhishTank check succeeded
+  - `in_database`: Whether URL was found in PhishTank database
+  - `verified`: Whether the phishing report was verified (if in database)
+  - `phish_id`: PhishTank ID (if in database)
+  - `verified_at`: Verification timestamp (if available)
+  - `detail_url`: Link to PhishTank details page (if available)
+  - `error`: Error message (if check failed)
 
 **Risk Levels:**
 - `Safe`: Not phishing
@@ -210,6 +236,37 @@ Get phishing education tips and best practices.
 ```bash
 curl http://localhost:8000/education/tips
 ```
+
+## Configuration
+
+### PhishTank API Integration
+
+PhishNet can be configured to check URLs against the PhishTank database for verified phishing sites.
+
+#### Environment Variables
+
+Create a `.env` file in the `backend` directory:
+
+```bash
+# PhishTank API Configuration
+PHISHTANK_API_KEY=your_api_key_here
+
+# API Server Configuration (optional)
+API_HOST=0.0.0.0
+API_PORT=8000
+```
+
+#### Getting a PhishTank API Key
+
+1. Visit https://www.phishtank.com/api_info.php
+2. Register for a free account
+3. Request an API key
+4. Add the key to your `.env` file
+
+#### Behavior
+
+- **With API Key**: URLs are checked against PhishTank database, results included in response
+- **Without API Key**: System works in ML-only mode, no PhishTank checks performed
 
 ## Error Responses
 
