@@ -113,7 +113,40 @@ This installs:
 - NumPy - Numerical computing
 - Pytest - Testing framework
 
-#### Step 4: Train ML Models
+#### Step 4: Configure PhishTank API (Optional)
+
+PhishTank provides a real-time database of verified phishing URLs. Integration is optional but recommended for production use.
+
+**Getting a PhishTank API Key:**
+
+1. Visit [PhishTank API Registration](https://www.phishtank.com/api_info.php)
+2. Sign up for a free account
+3. Request an API key (free for non-commercial use)
+4. Copy your API key
+
+**Configuration:**
+
+```bash
+# In the backend directory
+cp .env.example .env
+
+# Edit .env file and add your API key
+# PHISHTANK_API_KEY=your_actual_api_key_here
+```
+
+**Verify PhishTank is enabled:**
+
+```bash
+python -c "from config import settings; print(f'PhishTank enabled: {settings.is_phishtank_configured()}')"
+```
+
+When PhishTank is enabled:
+- URLs are checked against the PhishTank verified database
+- If a URL is found in PhishTank as verified phishing, it overrides ML prediction
+- PhishTank results are included in the API response
+- The system works without PhishTank if no API key is configured (ML-only mode)
+
+#### Step 5: Train ML Models
 
 ```bash
 python train_models.py
@@ -154,7 +187,7 @@ Models saved successfully!
 pytest tests/ -v
 ```
 
-Expected: All 26 tests should pass.
+Expected: All 35 tests should pass (26 original + 9 PhishTank tests).
 
 #### Step 6: Start Backend Server
 
@@ -210,13 +243,32 @@ This will:
 ### 1. Test Backend API
 
 ```bash
-# Health check
+# Health check (includes PhishTank status)
 curl http://localhost:8000/health
+
+# Expected response:
+# {
+#   "status": "healthy",
+#   "models_loaded": true,
+#   "phishtank_enabled": true  # or false if not configured
+# }
 
 # Analyze a URL
 curl -X POST "http://localhost:8000/analyze/url" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://www.google.com","model":"random_forest"}'
+
+# Expected response includes phishtank_check field:
+# {
+#   "is_phishing": false,
+#   "confidence": 1.0,
+#   "risk_level": "Safe",
+#   ...
+#   "phishtank_check": {
+#     "success": true,
+#     "in_database": false
+#   }
+# }
 ```
 
 ### 2. Test Frontend
@@ -386,7 +438,14 @@ Check browser console for CORS errors.
 ### Backend (.env)
 
 ```bash
-# Optional configuration
+# PhishTank API Configuration (Optional)
+PHISHTANK_API_KEY=your_phishtank_api_key_here
+
+# API Server Configuration (Optional)
+API_HOST=0.0.0.0
+API_PORT=8000
+
+# Model and Data Paths (Optional)
 MODEL_DIR=models/saved_models
 DATASET_DIR=data
 LOG_LEVEL=INFO
