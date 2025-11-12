@@ -33,18 +33,118 @@ def train_phishnet_models():
     except Exception:
         csv_files = []
 
-    # Load and concatenate CSVs that contain 'is_phishing' column
+    # Load and concatenate CSVs, accepting multiple label column names and normalizing
+    label_candidates = [
+        'is_phishing', 'label', 'phishing', 'target', 'is_phish', 'y', 'class', 'labelled', 'is_malicious'
+    ]
+
+    def _normalize_label_series(s: pd.Series) -> pd.Series:
+        """Normalize a pandas Series to 0/1 values for phishing label.
+
+        Heuristics:
+        - If numeric and values are subset of {0,1} -> keep.
+        - If numeric with two unique values -> map min->0, max->1.
+        - If strings, map common phishing tokens to 1 and benign tokens to 0.
+        - If two unique strings not recognized, map first->0 second->1 (with warning).
+        """
+        # Drop NA for decision making but preserve indices
+        vals = s.dropna().unique()
+
+        # Numeric pathway
+        if pd.api.types.is_numeric_dtype(s):
+            uvals = set(vals.tolist())
+            if uvals <= {0, 1}:
+                return s.fillna(0).astype(int)
+            if len(uvals) == 2:
+                mn = min(uvals)
+                return s.fillna(mn).apply(lambda v: 1 if v != mn else 0).astype(int)
+            # Fallback: any positive -> phishing
+            return s.fillna(0).apply(lambda v: 1 if v and v != 0 else 0).astype(int)
+
+        # String/object pathway: map common tokens
+        mapping_pos = {'phishing', 'phish', 'malicious', 'phishng', 'phishng', '1', 'true', 'yes', 'y', 'phish/true'}
+        mapping_neg = {'legitimate', 'benign', 'legit', '0', 'false', 'no', 'n'}
+
+        def str_to_label(v):
+            if pd.isna(v):
+                return 0
+            vs = str(v).strip().lower()
+            if vs in mapping_pos:
+                return 1
+            if vs in mapping_neg:
+                return 0
+            # try numeric string
+            try:
+                vn = float(vs)
+                return 1 if vn != 0 else 0
+            except Exception:
+                return None
+
+        converted = s.map(str_to_label)
+        if converted.notna().all():
+            return converted.astype(int)
+
+        # If some values couldn't be recognized but there are exactly two unique original values,
+        # map them deterministically (first->0, second->1)
+        uniq = list(pd.Series(vals).astype(str))
+        if len(uniq) == 2:
+            a, b = uniq[0], uniq[1]
+            warnings.warn(f"Unrecognized label strings {uniq}; mapping '{a}'->0 and '{b}'->1")
+            return s.fillna(a).astype(str).map({a: 0, b: 1}).astype(int)
+
+        raise ValueError("Could not normalize label column to binary 0/1")
+
     datasets = []
     for path in csv_files:
         try:
             df = pd.read_csv(path)
-            if 'is_phishing' in df.columns:
-                print(f"Including dataset: {path} ({len(df)} rows)")
-                datasets.append(df)
-            else:
-                warnings.warn(f"Skipping {path}: missing 'is_phishing' column")
         except Exception as e:
             warnings.warn(f"Failed to read {path}: {e}")
+            continue
+
+        # find label column
+        found_label = None
+        for cand in label_candidates:
+            if cand in df.columns:
+                found_label = cand
+                break
+
+        if not found_label:
+            # also check case-insensitive exact matches
+            cols_lower = {c.lower(): c for c in df.columns}
+            for cand in label_candidates:
+                if cand in cols_lower:
+                    found_label = cols_lower[cand]
+                    break
+
+        # If still not found, try substring matching (e.g. 'CLASS_LABEL')
+        if not found_label:
+            for col in df.columns:
+                col_l = col.lower()
+                for cand in label_candidates:
+                    if cand in col_l:
+                        found_label = col
+                        break
+                if found_label:
+                    break
+
+        if not found_label:
+            warnings.warn(f"Skipping {path}: missing label column (tried {label_candidates})")
+            continue
+
+        # Normalize label
+        try:
+            df['is_phishing'] = _normalize_label_series(df[found_label])
+            # Drop the original label column if it wasn't already 'is_phishing'
+            if found_label != 'is_phishing':
+                try:
+                    df = df.drop(columns=[found_label])
+                except Exception:
+                    pass
+            print(f"Including dataset: {path} ({len(df)} rows) [label='{found_label}']")
+            datasets.append(df)
+        except Exception as e:
+            warnings.warn(f"Skipping {path}: could not normalize label column '{found_label}': {e}")
 
     if datasets:
         combined = pd.concat(datasets, ignore_index=True)
