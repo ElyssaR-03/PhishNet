@@ -4,28 +4,32 @@ Implements SVM, Random Forest, and Logistic Regression classifiers.
 """
 import os
 import joblib
+import json
 import numpy as np
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from typing import Dict, Tuple, Optional
-import pandas as pd
-
+from typing import Dict, Tuple, Optional, List
 
 class PhishingDetector:
     """Main class for phishing detection using multiple ML models."""
     
     def __init__(self):
         """Initialize the phishing detector with three ML models."""
+        # Use class_weight='balanced' for models that support it to mitigate class imbalance
         self.models = {
             'svm': SVC(kernel='rbf', probability=True, random_state=42),
-            'random_forest': RandomForestClassifier(n_estimators=100, random_state=42),
-            'logistic_regression': LogisticRegression(max_iter=1000, random_state=42)
+            'random_forest': RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced'),
+            'logistic_regression': LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced'),
+            'decision_tree': DecisionTreeClassifier(random_state=42, class_weight='balanced')
         }
         self.scaler = StandardScaler()
         self.is_trained = False
+        # feature_names represent the ordered list of feature column names used during training
+        self.feature_names: Optional[List[str]] = None
         self.model_dir = os.path.join(os.path.dirname(__file__), 'saved_models')
         os.makedirs(self.model_dir, exist_ok=True)
     
@@ -149,6 +153,15 @@ class PhishingDetector:
         
         scaler_path = os.path.join(self.model_dir, f"{prefix}_scaler.joblib")
         joblib.dump(self.scaler, scaler_path)
+        # Save feature names if available so prediction code can align inputs later
+        try:
+            features_path = os.path.join(self.model_dir, 'feature_names.json')
+            if self.feature_names is not None:
+                with open(features_path, 'w', encoding='utf-8') as fh:
+                    json.dump(self.feature_names, fh)
+        except Exception:
+            # Do not fail saving models if feature names cannot be persisted
+            pass
     
     def load_models(self, prefix: str = "model") -> bool:
         """
@@ -166,6 +179,16 @@ class PhishingDetector:
             scaler_path = os.path.join(self.model_dir, f"{prefix}_scaler.joblib")
             if os.path.exists(scaler_path):
                 self.scaler = joblib.load(scaler_path)
+
+            # Try to load feature names if present
+            try:
+                features_path = os.path.join(self.model_dir, 'feature_names.json')
+                if os.path.exists(features_path):
+                    with open(features_path, 'r', encoding='utf-8') as fh:
+                        self.feature_names = json.load(fh)
+            except Exception:
+                # ignore if feature names cannot be loaded
+                self.feature_names = None
             
             self.is_trained = True
             return True

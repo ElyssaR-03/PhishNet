@@ -9,6 +9,38 @@ import numpy as np
 from models.ml_models import PhishingDetector
 from feature_extractor import FeatureExtractor
 import os
+import warnings
+
+
+# Helper to build feature vectors aligned to trained feature order
+def build_feature_vector(detector: PhishingDetector, features: Dict[str, float], default_order: List[str]) -> np.ndarray:
+    """Return a numpy array feature vector aligned to detector.feature_names if available.
+
+    - If detector.feature_names exists, use that order; missing features are filled with 0.
+    - Otherwise, use the provided default_order.
+    - If the resulting vector length doesn't match scaler.n_features_in_ (when available), pad or truncate.
+    """
+    # Decide which order to use
+    order = detector.feature_names if getattr(detector, 'feature_names', None) else default_order
+
+    vec = np.array([features.get(k, 0) for k in order], dtype=float)
+
+    # If scaler expects a certain number of features, try to adapt (pad with zeros or truncate)
+    try:
+        expected = getattr(detector.scaler, 'n_features_in_', None)
+        if expected is not None:
+            if len(vec) < expected:
+                # pad with zeros
+                pad = np.zeros(expected - len(vec), dtype=float)
+                vec = np.concatenate([vec, pad])
+            elif len(vec) > expected:
+                warnings.warn(f"Incoming feature vector has {len(vec)} features but scaler expects {expected}; truncating")
+                vec = vec[:expected]
+    except Exception:
+        # If anything goes wrong, return the vector as-is
+        pass
+
+    return vec
 
 
 # Initialize FastAPI app
@@ -117,26 +149,16 @@ async def analyze_url(request: URLAnalysisRequest):
     try:
         # Extract features
         features = feature_extractor.extract_url_features(request.url)
-        
-        # Convert to numpy array (ensure consistent order)
-        feature_vector = np.array([
-            features.get('url_length', 0),
-            features.get('num_dots', 0),
-            features.get('num_hyphens', 0),
-            features.get('num_underscores', 0),
-            features.get('num_slashes', 0),
-            features.get('num_questions', 0),
-            features.get('num_equals', 0),
-            features.get('num_at', 0),
-            features.get('num_ampersands', 0),
-            features.get('num_digits', 0),
-            features.get('has_ip', 0),
-            features.get('is_https', 0),
-            features.get('domain_length', 0),
-            features.get('path_length', 0),
-            features.get('query_length', 0),
-            features.get('has_suspicious_keywords', 0),
-        ])
+
+        # Default URL feature order used when no trained feature list available
+        default_url_order = [
+            'url_length', 'num_dots', 'num_hyphens', 'num_underscores', 'num_slashes',
+            'num_questions', 'num_equals', 'num_at', 'num_ampersands', 'num_digits',
+            'has_ip', 'is_https', 'domain_length', 'path_length', 'query_length',
+            'has_suspicious_keywords'
+        ]
+
+        feature_vector = build_feature_vector(detector, features, default_url_order)
         
         # Make prediction
         if request.model == "ensemble":
@@ -178,21 +200,24 @@ async def analyze_email(request: EmailAnalysisRequest):
         # Extract features
         features = feature_extractor.extract_email_features(request.content, request.sender)
         
-        # For email, we'll use a subset of features that are relevant
-        # In a real application, you'd train separate models for email vs URL
-        # Here we'll use the URL feature space for simplicity
-        feature_vector = np.array([
-            features.get('content_length', 0) / 10,  # Scale down
-            features.get('num_urls', 0),
-            features.get('num_suspicious_keywords', 0),
-            features.get('has_money_keywords', 0) * 10,
-            features.get('num_exclamations', 0),
-            features.get('capital_ratio', 0) * 100,
-            features.get('mentions_attachments', 0) * 10,
-            features.get('sender_length', 0),
-            features.get('sender_has_numbers', 0) * 10,
-            0, 0, 0, 0, 0, 0, 0  # Padding for URL-specific features
-        ])
+        # For email, we'll use a subset of features that are relevant.
+        # Default email-to-URL-mapped order (padding included) used if no trained feature list exists.
+        default_email_order = [
+            'content_length', 'num_urls', 'num_suspicious_keywords', 'has_money_keywords',
+            'num_exclamations', 'capital_ratio', 'mentions_attachments', 'sender_length',
+            'sender_has_numbers',
+            # padding entries to match URL feature space size
+            'url_length', 'num_dots', 'num_hyphens', 'num_underscores', 'num_slashes', 'num_questions', 'num_equals'
+        ]
+
+        # Normalize/scale some email features to be roughly comparable to URL features
+        features['content_length'] = features.get('content_length', 0) / 10
+        features['has_money_keywords'] = features.get('has_money_keywords', 0) * 10
+        features['capital_ratio'] = features.get('capital_ratio', 0) * 100
+        features['mentions_attachments'] = features.get('mentions_attachments', 0) * 10
+        features['sender_has_numbers'] = features.get('sender_has_numbers', 0) * 10
+
+        feature_vector = build_feature_vector(detector, features, default_email_order)
         
         # Make prediction
         if request.model == "ensemble":
@@ -222,23 +247,23 @@ async def analyze_email(request: EmailAnalysisRequest):
 @app.post("/train", response_model=TrainingResponse)
 async def train_models(request: TrainingRequest):
     """
-    Train the ML models on synthetic data.
+    Train the ML models using datasets present in the data directory (or the configured data file).
     """
     try:
-        from data.dataset_generator import generate_synthetic_dataset
-        
-        # Generate dataset
-        X, y = generate_synthetic_dataset(n_samples=request.n_samples)
-        
-        # Train models
-        scores = detector.train(X.values, y)
-        
-        # Save models
-        detector.save_models()
+        # Use the train_models utility which loads CSV(s) from backend/data/ (or accepts --data-file)
+        # It returns a trained detector and scores.
+        from train_models import train_phishnet_models
+
+        # call training (uses files in backend/data by default). Ignore request.n_samples here.
+        new_detector, scores = train_phishnet_models()
+
+        # Replace module-level detector with the newly trained instance so API endpoints use it
+        global detector
+        detector = new_detector
         
         return TrainingResponse(
             success=True,
-            message=f"Models trained successfully on {request.n_samples} samples",
+            message=f"Models trained successfully using datasets in backend/data/",
             accuracies=scores
         )
         
@@ -253,6 +278,7 @@ async def get_models_info():
         "available_models": ["svm", "random_forest", "logistic_regression", "ensemble"],
         "default_model": "random_forest",
         "models_trained": detector.is_trained,
+        "trained_feature_names": getattr(detector, 'feature_names', None),
         "description": {
             "svm": "Support Vector Machine with RBF kernel",
             "random_forest": "Random Forest with 100 estimators",
