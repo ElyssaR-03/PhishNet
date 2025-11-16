@@ -13,6 +13,11 @@ from sklearn.preprocessing import StandardScaler
 from typing import Dict, Tuple, Optional
 import pandas as pd
 
+# Optional SHAP import for explainability
+try:
+    import shap
+except Exception:
+    shap = None
 
 class PhishingDetector:
     """Main class for phishing detection using multiple ML models."""
@@ -28,6 +33,8 @@ class PhishingDetector:
         self.is_trained = False
         self.model_dir = os.path.join(os.path.dirname(__file__), 'saved_models')
         os.makedirs(self.model_dir, exist_ok=True)
+        # explainers cache (model_name -> shap.Explainer)
+        self.explainers: Dict[str, object] = {}
     
     def train(self, X: np.ndarray, y: np.ndarray, test_size: float = 0.2) -> Dict[str, float]:
         """
@@ -137,6 +144,98 @@ class PhishingDetector:
         avg_confidence = float(np.mean(confidences)) if confidences else 0.5
         
         return ensemble_prediction, avg_confidence, predictions
+
+    def explain(self, X: np.ndarray, model_name: str = 'random_forest', top_k: int = 5) -> Dict:
+        """Return SHAP-based explanation (top_k features) for a single sample.
+
+        - X: 1D numpy array (raw, unscaled) of feature values in training order
+        - model_name: which model to explain (currently supports 'random_forest' and 'logistic_regression')
+        """
+        if not self.is_trained:
+            raise ValueError("Models must be trained/loaded before explaining")
+
+        if len(X.shape) == 1:
+            X = X.reshape(1, -1)
+
+        # Ensure feature vector matches scaler expected input size (pad/truncate)
+        expected = getattr(self.scaler, 'n_features_in_', None)
+        if expected is not None:
+            cur = X.shape[1]
+            if cur < expected:
+                pad = np.zeros((X.shape[0], expected - cur), dtype=float)
+                X = np.concatenate([X, pad], axis=1)
+            elif cur > expected:
+                X = X[:, :expected]
+
+        # scale using stored scaler
+        Xs = self.scaler.transform(X)
+
+        result: Dict = {
+            'model': model_name,
+            'scaled_vector': Xs.tolist(),
+            'top_features': []
+        }
+
+        # Ensure explainer exists for model
+        expl = self.explainers.get(model_name)
+        model = self.models.get(model_name)
+
+        # Create explainers lazily if shap is available
+        if shap is not None and expl is None and model is not None:
+            try:
+                if model_name == 'random_forest':
+                    expl = shap.TreeExplainer(model)
+                elif model_name == 'logistic_regression':
+                    # Use scaler mean as simple background
+                    if hasattr(self.scaler, 'mean_'):
+                        bg = self.scaler.mean_.reshape(1, -1)
+                        expl = shap.LinearExplainer(model, bg)
+                    else:
+                        expl = shap.LinearExplainer(model, np.zeros((1, Xs.shape[1])))
+                # cache
+                if expl is not None:
+                    self.explainers[model_name] = expl
+            except Exception:
+                expl = None
+
+        if expl is None:
+            # Fallback for linear models: use coefficients
+            if model_name == 'logistic_regression' and model is not None and hasattr(model, 'coef_'):
+                coefs = model.coef_[0]
+                contributions = (coefs * Xs[0]).tolist()
+                feature_names = getattr(self, 'feature_names', [f'f{i}' for i in range(len(contributions))])
+                feats = [{'feature': n, 'value': float(v), 'contribution': float(c), 'abs': abs(c)} for n, v, c in zip(feature_names, X[0].tolist(), contributions)]
+                feats_sorted = sorted(feats, key=lambda x: x['abs'], reverse=True)[:top_k]
+                result['top_features'] = feats_sorted
+                return result
+            else:
+                # No explainer available
+                result['warning'] = 'No SHAP explainer available for this model'
+                return result
+
+        # Compute SHAP values
+        try:
+            shap_vals = expl.shap_values(Xs)
+            # shap_values may be list (per-class) or array
+            if isinstance(shap_vals, list):
+                # pick class 1 (phishing) if present
+                if len(shap_vals) > 1:
+                    sv = np.array(shap_vals[1])[0]
+                else:
+                    sv = np.array(shap_vals[0])[0]
+            else:
+                sv = np.array(shap_vals)[0]
+
+            feature_names = getattr(self, 'feature_names', [f'f{i}' for i in range(len(sv))])
+            feats = []
+            for name, raw_val, contrib in zip(feature_names, X[0].tolist(), sv.tolist()):
+                feats.append({'feature': name, 'value': float(raw_val), 'contribution': float(contrib), 'abs': abs(contrib)})
+            feats_sorted = sorted(feats, key=lambda x: x['abs'], reverse=True)[:top_k]
+            result['top_features'] = feats_sorted
+            return result
+        except Exception as e:
+            result['error'] = str(e)
+            return result
     
     def save_models(self, prefix: str = "model") -> None:
         """Save trained models and scaler to disk."""
