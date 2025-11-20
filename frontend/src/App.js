@@ -16,7 +16,7 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>🛡️ PhishNet</h1>
+        <h1>PhishNet</h1>
         <p className="tagline">AI-Powered Phishing Detection System</p>
       </header>
 

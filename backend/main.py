@@ -6,41 +6,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List
 import numpy as np
-from models.ml_models import PhishingDetector
-from feature_extractor import FeatureExtractor
+try:
+    # Preferred: package-relative imports when app is run as a package
+    from .models.ml_models import PhishingDetector
+    from .feature_extractor import FeatureExtractor
+except Exception:
+    try:
+        # Fallback: module-style imports when running from backend/ as CWD or tests import `main` directly
+        from models.ml_models import PhishingDetector
+        from feature_extractor import FeatureExtractor
+    except Exception:
+        # Final fallback: absolute package import
+        from backend.models.ml_models import PhishingDetector
+        from backend.feature_extractor import FeatureExtractor
 import os
 import warnings
-
-
-# Helper to build feature vectors aligned to trained feature order
-def build_feature_vector(detector: PhishingDetector, features: Dict[str, float], default_order: List[str]) -> np.ndarray:
-    """Return a numpy array feature vector aligned to detector.feature_names if available.
-
-    - If detector.feature_names exists, use that order; missing features are filled with 0.
-    - Otherwise, use the provided default_order.
-    - If the resulting vector length doesn't match scaler.n_features_in_ (when available), pad or truncate.
-    """
-    # Decide which order to use
-    order = detector.feature_names if getattr(detector, 'feature_names', None) else default_order
-
-    vec = np.array([features.get(k, 0) for k in order], dtype=float)
-
-    # If scaler expects a certain number of features, try to adapt (pad with zeros or truncate)
-    try:
-        expected = getattr(detector.scaler, 'n_features_in_', None)
-        if expected is not None:
-            if len(vec) < expected:
-                # pad with zeros
-                pad = np.zeros(expected - len(vec), dtype=float)
-                vec = np.concatenate([vec, pad])
-            elif len(vec) > expected:
-                warnings.warn(f"Incoming feature vector has {len(vec)} features but scaler expects {expected}; truncating")
-                vec = vec[:expected]
-    except Exception:
-        # If anything goes wrong, return the vector as-is
-        pass
-
-    return vec
+from typing import List
 
 
 # Initialize FastAPI app
@@ -116,6 +97,24 @@ def determine_risk_level(confidence: float, is_phishing: bool) -> str:
         return "Low Risk"
 
 
+# Ensure feature vectors match the scaler's expected input size
+def align_feature_vector(vec: np.ndarray, detector: PhishingDetector) -> np.ndarray:
+    if len(vec.shape) == 1:
+        vec = vec.reshape(1, -1)
+    # Extract expected input size from scaler if available
+    expected = getattr(detector.scaler, 'n_features_in_', None)
+    if expected is None:
+        return vec
+    cur = vec.shape[1]
+    if cur < expected:
+        pad = np.zeros((vec.shape[0], expected - cur), dtype=float)
+        vec = np.concatenate([vec, pad], axis=1)
+    elif cur > expected:
+        warnings.warn(f"Incoming feature vector has {cur} features, but scaler expects {expected}; truncating")
+        vec = vec[:, :expected]
+    return vec
+
+
 # API endpoints
 @app.get("/", response_model=HealthResponse)
 async def root():
@@ -149,16 +148,29 @@ async def analyze_url(request: URLAnalysisRequest):
     try:
         # Extract features
         features = feature_extractor.extract_url_features(request.url)
+        
+        # Convert to numpy array (ensure consistent order)
+        feature_vector = np.array([
+            features.get('url_length', 0),
+            features.get('num_dots', 0),
+            features.get('num_hyphens', 0),
+            features.get('num_underscores', 0),
+            features.get('num_slashes', 0),
+            features.get('num_questions', 0),
+            features.get('num_equals', 0),
+            features.get('num_at', 0),
+            features.get('num_ampersands', 0),
+            features.get('num_digits', 0),
+            features.get('has_ip', 0),
+            features.get('is_https', 0),
+            features.get('domain_length', 0),
+            features.get('path_length', 0),
+            features.get('query_length', 0),
+            features.get('has_suspicious_keywords', 0),
+        ])
 
-        # Default URL feature order used when no trained feature list available
-        default_url_order = [
-            'url_length', 'num_dots', 'num_hyphens', 'num_underscores', 'num_slashes',
-            'num_questions', 'num_equals', 'num_at', 'num_ampersands', 'num_digits',
-            'has_ip', 'is_https', 'domain_length', 'path_length', 'query_length',
-            'has_suspicious_keywords'
-        ]
-
-        feature_vector = build_feature_vector(detector, features, default_url_order)
+        # Align vector size to scaler if necessary (pad/truncate)
+        feature_vector = align_feature_vector(feature_vector, detector)
         
         # Make prediction
         if request.model == "ensemble":
@@ -200,24 +212,24 @@ async def analyze_email(request: EmailAnalysisRequest):
         # Extract features
         features = feature_extractor.extract_email_features(request.content, request.sender)
         
-        # For email, we'll use a subset of features that are relevant.
-        # Default email-to-URL-mapped order (padding included) used if no trained feature list exists.
-        default_email_order = [
-            'content_length', 'num_urls', 'num_suspicious_keywords', 'has_money_keywords',
-            'num_exclamations', 'capital_ratio', 'mentions_attachments', 'sender_length',
-            'sender_has_numbers',
-            # padding entries to match URL feature space size
-            'url_length', 'num_dots', 'num_hyphens', 'num_underscores', 'num_slashes', 'num_questions', 'num_equals'
-        ]
+        # For email, we'll use a subset of features that are relevant
+        # In a real application, you'd train separate models for email vs URL
+        # Here we'll use the URL feature space for simplicity
+        feature_vector = np.array([
+            features.get('content_length', 0) / 10,  # Scale down
+            features.get('num_urls', 0),
+            features.get('num_suspicious_keywords', 0),
+            features.get('has_money_keywords', 0) * 10,
+            features.get('num_exclamations', 0),
+            features.get('capital_ratio', 0) * 100,
+            features.get('mentions_attachments', 0) * 10,
+            features.get('sender_length', 0),
+            features.get('sender_has_numbers', 0) * 10,
+            0, 0, 0, 0, 0, 0, 0  # Padding for URL-specific features
+        ])
 
-        # Normalize/scale some email features to be roughly comparable to URL features
-        features['content_length'] = features.get('content_length', 0) / 10
-        features['has_money_keywords'] = features.get('has_money_keywords', 0) * 10
-        features['capital_ratio'] = features.get('capital_ratio', 0) * 100
-        features['mentions_attachments'] = features.get('mentions_attachments', 0) * 10
-        features['sender_has_numbers'] = features.get('sender_has_numbers', 0) * 10
-
-        feature_vector = build_feature_vector(detector, features, default_email_order)
+        # Align vector size to scaler if necessary (pad/truncate)
+        feature_vector = align_feature_vector(feature_vector, detector)
         
         # Make prediction
         if request.model == "ensemble":
@@ -252,23 +264,113 @@ async def train_models(request: TrainingRequest):
     try:
         # Use the train_models utility which loads CSV(s) from backend/data/ (or accepts --data-file)
         # It returns a trained detector and scores.
-        from train_models import train_phishnet_models
+        # Import the train function using relative import first (works when running as package),
+        # then try other fallbacks so the endpoint works whether `main` is executed as a module
+        # or imported by tests/tools that manipulate sys.path.
+        try:
+            from .train_models import train_phishnet_models
+        except Exception:
+            try:
+                # fallback when running from backend/ as CWD (script mode)
+                from train_models import train_phishnet_models
+            except Exception:
+                # final fallback to absolute package import
+                from backend.train_models import train_phishnet_models
 
-        # call training (uses files in backend/data by default). Ignore request.n_samples here.
-        new_detector, scores = train_phishnet_models()
+        # call training (uses files in backend/data by default).
+        # If the caller provided `n_samples`, forward it so tests or callers can request
+        # controlled synthetic generation when no CSVs are available.
+        new_detector, scores = train_phishnet_models(n_samples=request.n_samples)
 
         # Replace module-level detector with the newly trained instance so API endpoints use it
         global detector
         detector = new_detector
-        
+
         return TrainingResponse(
             success=True,
             message=f"Models trained successfully using datasets in backend/data/",
             accuracies=scores
         )
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Training failed: {str(e)}")
+
+
+@app.post("/explain/url")
+async def explain_url(request: URLAnalysisRequest, top_k: int = 5):
+    """Return SHAP-based explanation for a URL prediction.
+
+    Returns the top contributing features for the requested model.
+    """
+    if not detector.is_trained:
+        raise HTTPException(
+            status_code=503,
+            detail="Models not trained. Please train models first using /train endpoint."
+        )
+
+    try:
+        features = feature_extractor.extract_url_features(request.url)
+
+        feature_vector = np.array([
+            features.get('url_length', 0),
+            features.get('num_dots', 0),
+            features.get('num_hyphens', 0),
+            features.get('num_underscores', 0),
+            features.get('num_slashes', 0),
+            features.get('num_questions', 0),
+            features.get('num_equals', 0),
+            features.get('num_at', 0),
+            features.get('num_ampersands', 0),
+            features.get('num_digits', 0),
+            features.get('has_ip', 0),
+            features.get('is_https', 0),
+            features.get('domain_length', 0),
+            features.get('path_length', 0),
+            features.get('query_length', 0),
+            features.get('has_suspicious_keywords', 0),
+        ])
+
+        # Align for scaler
+        feature_vector = align_feature_vector(feature_vector, detector)
+
+        explain_result = detector.explain(feature_vector, model_name=request.model, top_k=top_k)
+        return explain_result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Explain failed: {str(e)}")
+
+
+@app.post("/explain/email")
+async def explain_email(request: EmailAnalysisRequest, top_k: int = 5):
+    """Return SHAP-based explanation for an email prediction."""
+    if not detector.is_trained:
+        raise HTTPException(
+            status_code=503,
+            detail="Models not trained. Please train models first using /train endpoint."
+        )
+
+    try:
+        features = feature_extractor.extract_email_features(request.content, request.sender)
+
+        feature_vector = np.array([
+            features.get('content_length', 0) / 10,
+            features.get('num_urls', 0),
+            features.get('num_suspicious_keywords', 0),
+            features.get('has_money_keywords', 0) * 10,
+            features.get('num_exclamations', 0),
+            features.get('capital_ratio', 0) * 100,
+            features.get('mentions_attachments', 0) * 10,
+            features.get('sender_length', 0),
+            features.get('sender_has_numbers', 0) * 10,
+            0, 0, 0, 0, 0, 0, 0
+        ])
+
+        feature_vector = align_feature_vector(feature_vector, detector)
+        explain_result = detector.explain(feature_vector, model_name=request.model, top_k=top_k)
+        return explain_result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Explain failed: {str(e)}")
 
 
 @app.get("/models/info")

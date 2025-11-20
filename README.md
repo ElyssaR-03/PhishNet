@@ -1,6 +1,6 @@
-# PhishNet 🛡️
+# PhishNet
 
-AI-Powered Phishing Detection System using Machine Learning
+Phishing Detection System using Machine Learning
 
 ## Overview
 
