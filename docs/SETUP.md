@@ -148,6 +148,25 @@ Saving trained models...
 Models saved successfully!
 ```
 
+#### Training behavior and custom datasets
+
+- The training script (`backend/train_models.py`) now scans `backend/data/` for CSV files and will include
+  any CSV that contains a label column. The loader recognizes common label names such as `is_phishing`,
+  `label`, `phishing`, `target`, `y`, `class`, `CLASS_LABEL`, etc., and will normalize string or
+  numeric encodings into binary 0/1 labels used by the models. If a CSV contains a recognized label column it will
+  be concatenated with other valid CSVs and used for training.
+
+- If your CSV uses a different label name, either rename the column to one of the common names above or
+  the loader will often match by substring (e.g., `CLASS_LABEL` will be detected). If normalization fails
+  for a particular file the script will skip that file and print a warning.
+
+Example (run training from project root):
+
+```powershell
+& "c:\Users\mslys\OneDrive - Tennessee State University\PhishNet\PhishNet\backend\venv\Scripts\python.exe" "c:\Users\mslys\OneDrive - Tennessee State University\PhishNet\PhishNet\backend\train_models.py"
+```
+
+
 #### Step 5: Run Backend Tests
 
 ```bash

@@ -229,3 +229,10 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"\nError during training: {e}")
         sys.exit(1)
+    finally:
+        # Restore os.listdir if we overrode it
+        try:
+            if 'original_listdir' in locals():
+                os.listdir = original_listdir
+        except Exception:
+            pass

@@ -380,6 +380,7 @@ async def get_models_info():
         "available_models": ["svm", "random_forest", "logistic_regression", "ensemble"],
         "default_model": "random_forest",
         "models_trained": detector.is_trained,
+        "trained_feature_names": getattr(detector, 'feature_names', None),
         "description": {
             "svm": "Support Vector Machine with RBF kernel",
             "random_forest": "Random Forest with 100 estimators",
