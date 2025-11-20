@@ -59,7 +59,7 @@ Summary:
 - 13 Python backend files
 - 9 React frontend files
 - 7 documentation files
-- 32 unit tests (100% passing)
+- 29 unit tests (100% passing)
 - 3 ML models + ensemble
 - 6 API endpoints
 - 0 security vulnerabilities
